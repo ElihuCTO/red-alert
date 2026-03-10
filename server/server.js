@@ -17,21 +17,19 @@ const ALERT_SOURCE_URL = "https://www.oref.org.il/WarningMessages/alert/alerts.j
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-
 const SOUND_MAP = {
-  "תל אביב": "slayer.mp3",
   "באר שבע": "sepultura.mp3",
-  "חיפה": "pantera.mp3",
-  "ירושלים": "megadeth.mp3",
+  "חיפה": "haifa.mp3",
+  "ירושלים": "jerusalem.mp3",
+  "תל אביב": "telaviv.mp3",
 };
 
-const DEFAULT_SOUND = "315618__modularsamples__yamaha-cs-30l-whoopie-bass-c5-whoopie-bass-72-127.aiff";
-
+const DEFAULT_BELL_SOUND =
+  "315618__modularsamples__yamaha-cs-30l-whoopie-bass-c5-whoopie-bass-72-127.aiff";
 
 let lastAlertSignature = null;
 let lastAlertObject = null;
 let history = [];
-
 
 const colors = {
   reset: "\x1b[0m",
@@ -47,7 +45,6 @@ const colors = {
   bgRed: "\x1b[41m",
 };
 
-
 const categoryMap = {
   1: "ירי רקטות וטילים",
   2: "חשש לחדירת מחבלים",
@@ -55,9 +52,8 @@ const categoryMap = {
   4: "אירוע חומרים מסוכנים",
   5: "אירוע ביטחוני",
   6: "חדירת כלי טיס עוין",
-  10: "האירוע הסתיים",
+  10: "הודעת מצב",
 };
-
 
 function rtl(text) {
   return String(text).split("").reverse().join("");
@@ -81,41 +77,76 @@ function nowStr() {
   });
 }
 
-
-
 function buildSignature(alert) {
   const title = alert?.title ?? "";
   const desc = alert?.desc ?? "";
   const areas = Array.isArray(alert?.data)
-    ? alert.data.slice().sort().join("|")
+    ? alert.data.slice().sort((a, b) => a.localeCompare(b, "he")).join("|")
     : "";
 
   return `${title}__${desc}__${areas}`;
 }
 
+function includesOneOf(text, phrases) {
+  const safeText = String(text || "").trim();
+  return phrases.some((phrase) => safeText.includes(phrase));
+}
 
+function resolveAlertKind(raw) {
+  const cat = Number(raw?.cat ?? 0);
+  const title = String(raw?.title ?? "").trim();
+  const desc = String(raw?.desc ?? "").trim();
+
+  const isEnded =
+    includesOneOf(title, ["האירוע הסתיים"]) ||
+    includesOneOf(desc, ["האירוע הסתיים", "יכולים לצאת"]);
+
+  const isEarlyWarning =
+    includesOneOf(title, ["התראה מוקדמת"]) ||
+    includesOneOf(desc, ["התראה מוקדמת"]);
+
+  if (cat === 10 && isEnded) {
+    return "ended";
+  }
+
+  if (cat === 10 && isEarlyWarning) {
+    return "early";
+  }
+
+  if (isEnded) {
+    return "ended";
+  }
+
+  if (isEarlyWarning) {
+    return "early";
+  }
+
+  return "live";
+}
 
 function resolveCategoryName(raw) {
   const cat = Number(raw?.cat ?? 0);
-  const title = String(raw?.title ?? "");
-  const desc = String(raw?.desc ?? "");
+  const kind = resolveAlertKind(raw);
 
-  if (
-    cat === 10 ||
-    title.includes("האירוע הסתיים") ||
-    desc.includes("האירוע הסתיים")
-  ) {
+  if (kind === "early") {
+    return "התראה מוקדמת";
+  }
+
+  if (kind === "ended") {
     return "האירוע הסתיים";
   }
 
   return categoryMap[cat] || "קטגוריה לא ידועה";
 }
 
-
+function sortAreasHebrew(areas) {
+  return [...areas].sort((a, b) => a.localeCompare(b, "he"));
+}
 
 function normalizeAlert(raw) {
-  const areas = Array.isArray(raw?.data) ? raw.data : [];
+  const areas = Array.isArray(raw?.data) ? sortAreasHebrew(raw.data) : [];
   const categoryCode = Number(raw?.cat ?? 0);
+  const alertKind = resolveAlertKind(raw);
 
   return {
     id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -124,16 +155,16 @@ function normalizeAlert(raw) {
     areas,
     category: categoryCode,
     categoryName: resolveCategoryName(raw),
+    alertKind,
     receivedAt: new Date().toISOString(),
   };
 }
 
-
-
 function getCategoryColor(alert) {
-  const category = Number(alert?.category ?? 0);
+  if (alert?.alertKind === "ended") return colors.green;
+  if (alert?.alertKind === "early") return colors.yellow;
 
-  if (category === 10) return colors.green;
+  const category = Number(alert?.category ?? 0);
 
   switch (category) {
     case 1:
@@ -145,24 +176,57 @@ function getCategoryColor(alert) {
   }
 }
 
+function playSoundFile(filename) {
+  const soundPath = path.join(__dirname, filename);
+  exec(`afplay "${soundPath}"`, () => {});
+}
 
+function normalizeCityText(text) {
+  return String(text || "")
+    .replace(/["'׳״]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-function playAlertSound(alert) {
+function cityMatchesKey(city, key) {
+  const normalizedCity = normalizeCityText(city);
+  const normalizedKey = normalizeCityText(key);
+
+  return (
+    normalizedCity.includes(normalizedKey) ||
+    normalizedKey.includes(normalizedCity)
+  );
+}
+
+function findMetalSoundForAlert(alert) {
   for (const city of alert.areas) {
-    for (const key in SOUND_MAP) {
-      if (city.includes(key)) {
-        const soundPath = path.join(__dirname, SOUND_MAP[key]);
-        exec(`afplay "${soundPath}"`);
-        return;
+    for (const key of Object.keys(SOUND_MAP)) {
+      if (cityMatchesKey(city, key)) {
+        return SOUND_MAP[key];
       }
     }
   }
 
-  const defaultPath = path.join(__dirname, DEFAULT_SOUND);
-  exec(`afplay "${defaultPath}"`);
+  return null;
 }
 
+function playSoundsForAlert(alert) {
+  if (alert.alertKind === "ended") {
+    return;
+  }
 
+  playSoundFile(DEFAULT_BELL_SOUND);
+
+  if (alert.alertKind === "early") {
+    const metalSound = findMetalSoundForAlert(alert);
+
+    if (metalSound) {
+      setTimeout(() => {
+        playSoundFile(metalSound);
+      }, 150);
+    }
+  }
+}
 
 function printAlert(alert) {
   const categoryColor = getCategoryColor(alert);
@@ -174,6 +238,7 @@ function printAlert(alert) {
   printLine(`תיאור: ${alert.desc || "ללא תיאור"}`, colors.white);
   printLine(`קטגוריה: ${alert.category}`, categoryColor);
   printLine(`סוג קטגוריה: ${alert.categoryName}`, categoryColor);
+  printLine(`סוג אירוע פנימי: ${alert.alertKind}`, colors.blue);
   printLine(`יישובים (${alert.areas.length}):`, colors.magenta);
 
   alert.areas.forEach((city) => {
@@ -184,20 +249,14 @@ function printAlert(alert) {
   console.log("");
 }
 
-
-
 function printHeartbeat() {
   printLine(`השרת פעיל: ${nowStr()}`, colors.dim);
 }
-
-
 
 function scheduleNextFetch() {
   const delay = 1800 + Math.random() * 400;
   setTimeout(fetchAlerts, delay);
 }
-
-
 
 async function fetchAlerts() {
   try {
@@ -249,17 +308,12 @@ async function fetchAlerts() {
       history = history.slice(0, 100);
 
       printAlert(normalized);
-
-      if (normalized.category !== 10) {
-        playAlertSound(normalized);
-      }
+      playSoundsForAlert(normalized);
     }
   } catch {}
 
   scheduleNextFetch();
 }
-
-
 
 app.get("/health", (req, res) => {
   res.json({ ok: true });
@@ -272,8 +326,6 @@ app.get("/api/last-alert", (req, res) => {
 app.get("/api/history", (req, res) => {
   res.json(history);
 });
-
-
 
 setInterval(printHeartbeat, 60000);
 
