@@ -4,6 +4,9 @@ import L from "leaflet";
 import "./App.css";
 import { cityCoords } from "./data/cities";
 
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
+  
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
@@ -121,23 +124,27 @@ export default function App() {
 
   const lastPlayedAlertIdRef = useRef(null);
 
+
+
   async function loadData() {
     try {
       const [lastRes, historyRes] = await Promise.all([
-        fetch("/api/last-alert"),
-        fetch("/api/history"),
+        fetch(`${API_BASE_URL}/api/last-alert`),
+        fetch(`${API_BASE_URL}/api/history`),
       ]);
-
+  
       const lastData = await lastRes.json();
       const historyData = await historyRes.json();
-
+  
       setLastAlert(lastData);
       setHistory(Array.isArray(historyData) ? historyData : []);
       setStatus("מחובר");
-    } catch {
+    } catch (error) {
       setStatus("שגיאת חיבור");
     }
   }
+
+
 
   useEffect(() => {
     loadData();
