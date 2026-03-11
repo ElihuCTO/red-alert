@@ -1,13 +1,16 @@
 import express from "express";
 import http from "http";
 import cors from "cors";
+import { WebSocketServer } from "ws";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const server = http.createServer(app);
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+
+const wss = new WebSocketServer({ server });
 
 const ALERT_SOURCE_URL = "https://www.oref.org.il/WarningMessages/alert/alerts.json";
 
@@ -188,6 +191,16 @@ function printHeartbeat() {
   printLine(`השרת פעיל: ${nowStr()}`, colors.dim);
 }
 
+function broadcast(type, payload) {
+  const message = JSON.stringify({ type, payload });
+
+  wss.clients.forEach((client) => {
+    if (client.readyState === 1) {
+      client.send(message);
+    }
+  });
+}
+
 function scheduleNextFetch() {
   const delay = 1800 + Math.random() * 400;
   setTimeout(fetchAlerts, delay);
@@ -242,11 +255,24 @@ async function fetchAlerts() {
       history = history.slice(0, 100);
 
       printAlert(normalized);
+      broadcast("alert", normalized);
     }
   } catch {}
 
   scheduleNextFetch();
 }
+
+wss.on("connection", (ws) => {
+  ws.send(
+    JSON.stringify({
+      type: "init",
+      payload: {
+        lastAlert: lastAlertObject,
+        history,
+      },
+    })
+  );
+});
 
 app.get("/health", (req, res) => {
   res.json({ ok: true });

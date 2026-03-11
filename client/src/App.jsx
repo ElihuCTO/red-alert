@@ -15,6 +15,10 @@ const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
   "https://red-alert-wso0.onrender.com";
 
+const WS_BASE_URL =
+  import.meta.env.VITE_WS_BASE_URL ||
+  "wss://red-alert-wso0.onrender.com";
+
 const SOUND_MAP = {
   "באר שבע": "/sounds/sepultura.mp3",
   "חיפה": "/sounds/haifa.mp3",
@@ -92,8 +96,7 @@ async function playAudio(src) {
 }
 
 async function playSoundsForAlert(alert, soundEnabled) {
-  if (!soundEnabled) return;
-  if (!alert) return;
+  if (!soundEnabled || !alert) return;
 
   if (alert.alertKind === "ended") {
     return;
@@ -135,33 +138,78 @@ function FitMapToMarkers({ points }) {
 export default function App() {
   const [lastAlert, setLastAlert] = useState(null);
   const [history, setHistory] = useState([]);
-  const [status, setStatus] = useState("טוען...");
+  const [status, setStatus] = useState("מתחבר...");
   const [soundEnabled, setSoundEnabled] = useState(false);
 
   const lastPlayedAlertId = useRef(null);
+  const reconnectTimeoutRef = useRef(null);
 
-  async function loadData() {
-    try {
-      const [lastRes, historyRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/api/last-alert`),
-        fetch(`${API_BASE_URL}/api/history`),
-      ]);
+  const alertPoints = useMemo(() => {
+    if (!lastAlert?.areas?.length) return [];
 
-      const lastData = await lastRes.json();
-      const historyData = await historyRes.json();
-
-      setLastAlert(lastData);
-      setHistory(Array.isArray(historyData) ? historyData : []);
-      setStatus("מחובר");
-    } catch {
-      setStatus("שגיאת חיבור");
-    }
-  }
+    return lastAlert.areas
+      .map((city) => findCoordsByCityName(city))
+      .filter(Boolean);
+  }, [lastAlert]);
 
   useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 2000);
-    return () => clearInterval(interval);
+    let ws;
+
+    function connect() {
+      ws = new WebSocket(WS_BASE_URL);
+
+      ws.onopen = () => {
+        setStatus("מחובר בלייב");
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+
+          if (msg.type === "init") {
+            if (msg.payload?.lastAlert) {
+              setLastAlert(msg.payload.lastAlert);
+            }
+
+            if (Array.isArray(msg.payload?.history)) {
+              setHistory(msg.payload.history);
+            }
+
+            return;
+          }
+
+          if (msg.type === "alert" && msg.payload) {
+            setLastAlert(msg.payload);
+            setHistory((prev) => {
+              const next = [msg.payload, ...prev.filter((x) => x.id !== msg.payload.id)];
+              return next.slice(0, 100);
+            });
+          }
+        } catch {}
+      };
+
+      ws.onclose = () => {
+        setStatus("החיבור נותק, מנסה להתחבר מחדש...");
+        reconnectTimeoutRef.current = setTimeout(connect, 3000);
+      };
+
+      ws.onerror = () => {
+        setStatus("שגיאת WebSocket");
+        ws.close();
+      };
+    }
+
+    connect();
+
+    return () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+
+      if (ws) {
+        ws.close();
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -172,14 +220,6 @@ export default function App() {
     playSoundsForAlert(lastAlert, soundEnabled);
   }, [lastAlert, soundEnabled]);
 
-  const alertPoints = useMemo(() => {
-    if (!lastAlert?.areas?.length) return [];
-
-    return lastAlert.areas
-      .map((city) => findCoordsByCityName(city))
-      .filter(Boolean);
-  }, [lastAlert]);
-
   async function enableSound() {
     try {
       const audio = new Audio(DEFAULT_BELL_SOUND);
@@ -188,7 +228,6 @@ export default function App() {
       audio.pause();
       audio.currentTime = 0;
       audio.muted = false;
-
       setSoundEnabled(true);
     } catch {
       setSoundEnabled(true);
@@ -200,7 +239,7 @@ export default function App() {
       <header className="header">
         <div>
           <h1>מפת אזעקות בזמן אמת</h1>
-          <p className="sub">התראה אחרונה והיסטוריה מהמנוע שלך</p>
+          <p className="sub">התראות בלייב דרך WebSocket</p>
         </div>
 
         <div className="header-actions">
@@ -272,8 +311,7 @@ export default function App() {
                 </p>
 
                 <p>
-                  <strong>תיאור:</strong>{" "}
-                  {lastAlert.desc || "ללא תיאור"}
+                  <strong>תיאור:</strong> {lastAlert.desc || "ללא תיאור"}
                 </p>
 
                 <p>
@@ -281,15 +319,12 @@ export default function App() {
                 </p>
 
                 <p>
-                  <strong>סוג קטגוריה:</strong>{" "}
-                  {lastAlert.categoryName}
+                  <strong>סוג קטגוריה:</strong> {lastAlert.categoryName}
                 </p>
 
                 <p>
                   <strong>זמן:</strong>{" "}
-                  {new Date(
-                    lastAlert.receivedAt
-                  ).toLocaleString("he-IL")}
+                  {new Date(lastAlert.receivedAt).toLocaleString("he-IL")}
                 </p>
 
                 <div>
