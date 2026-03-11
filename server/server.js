@@ -18,6 +18,16 @@ let lastAlertSignature = null;
 let lastAlertObject = null;
 let history = [];
 
+let debugState = {
+  pollCount: 0,
+  lastFetchAt: null,
+  lastHttpStatus: null,
+  lastTextSample: null,
+  lastError: null,
+  lastParsedOk: false,
+};
+
+
 const colors = {
   reset: "\x1b[0m",
   bright: "\x1b[1m",
@@ -206,23 +216,34 @@ function scheduleNextFetch() {
   setTimeout(fetchAlerts, delay);
 }
 
+
+
 async function fetchAlerts() {
+  debugState.pollCount += 1;
+  debugState.lastFetchAt = new Date().toISOString();
+  debugState.lastError = null;
+  debugState.lastParsedOk = false;
+
   try {
     const res = await fetch(ALERT_SOURCE_URL, {
       headers: {
         "User-Agent": "Mozilla/5.0",
-        Accept: "application/json",
+        Accept: "application/json, text/plain, */*",
         Referer: "https://www.oref.org.il/",
         Connection: "keep-alive",
       },
     });
 
+    debugState.lastHttpStatus = res.status;
+
     if (!res.ok) {
+      debugState.lastTextSample = `HTTP ${res.status}`;
       scheduleNextFetch();
       return;
     }
 
     const text = await res.text();
+    debugState.lastTextSample = text ? text.slice(0, 300) : "(empty)";
 
     if (!text || text.length < 5) {
       scheduleNextFetch();
@@ -230,10 +251,11 @@ async function fetchAlerts() {
     }
 
     let raw;
-
     try {
       raw = JSON.parse(text);
-    } catch {
+      debugState.lastParsedOk = true;
+    } catch (err) {
+      debugState.lastError = `JSON parse failed: ${err.message}`;
       scheduleNextFetch();
       return;
     }
@@ -249,18 +271,26 @@ async function fetchAlerts() {
       lastAlertSignature = signature;
 
       const normalized = normalizeAlert(raw);
-
       lastAlertObject = normalized;
+
       history.unshift(normalized);
       history = history.slice(0, 100);
 
       printAlert(normalized);
-      broadcast("alert", normalized);
+
+      if (typeof broadcast === "function") {
+        broadcast("alert", normalized);
+      }
     }
-  } catch {}
+  } catch (err) {
+    debugState.lastError = err.message;
+  }
 
   scheduleNextFetch();
 }
+
+
+
 
 wss.on("connection", (ws) => {
   ws.send(
@@ -288,8 +318,9 @@ app.get("/api/history", (req, res) => {
 
 app.get("/debug", (req, res) => {
   res.json({
+    debugState,
     lastAlertObject,
-    historyCount: history.length
+    historyCount: history.length,
   });
 });
 setInterval(printHeartbeat, 60000);
