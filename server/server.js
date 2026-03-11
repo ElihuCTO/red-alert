@@ -1,32 +1,19 @@
 import express from "express";
 import http from "http";
 import cors from "cors";
-import { WebSocketServer } from "ws";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const server = http.createServer(app);
-const PORT = process.env.PORT || 3000;
-
-const wss = new WebSocketServer({ server });
+const PORT = 3000;
 
 const ALERT_SOURCE_URL = "https://www.oref.org.il/WarningMessages/alert/alerts.json";
 
 let lastAlertSignature = null;
 let lastAlertObject = null;
 let history = [];
-
-let debugState = {
-  pollCount: 0,
-  lastFetchAt: null,
-  lastHttpStatus: null,
-  lastTextSample: null,
-  lastError: null,
-  lastParsedOk: false,
-};
-
 
 const colors = {
   reset: "\x1b[0m",
@@ -201,49 +188,28 @@ function printHeartbeat() {
   printLine(`השרת פעיל: ${nowStr()}`, colors.dim);
 }
 
-function broadcast(type, payload) {
-  const message = JSON.stringify({ type, payload });
-
-  wss.clients.forEach((client) => {
-    if (client.readyState === 1) {
-      client.send(message);
-    }
-  });
-}
-
 function scheduleNextFetch() {
   const delay = 1800 + Math.random() * 400;
   setTimeout(fetchAlerts, delay);
 }
 
-
-
 async function fetchAlerts() {
-  debugState.pollCount += 1;
-  debugState.lastFetchAt = new Date().toISOString();
-  debugState.lastError = null;
-  debugState.lastParsedOk = false;
-
   try {
     const res = await fetch(ALERT_SOURCE_URL, {
       headers: {
         "User-Agent": "Mozilla/5.0",
-        Accept: "application/json, text/plain, */*",
+        Accept: "application/json",
         Referer: "https://www.oref.org.il/",
         Connection: "keep-alive",
       },
     });
 
-    debugState.lastHttpStatus = res.status;
-
     if (!res.ok) {
-      debugState.lastTextSample = `HTTP ${res.status}`;
       scheduleNextFetch();
       return;
     }
 
     const text = await res.text();
-    debugState.lastTextSample = text ? text.slice(0, 300) : "(empty)";
 
     if (!text || text.length < 5) {
       scheduleNextFetch();
@@ -251,11 +217,10 @@ async function fetchAlerts() {
     }
 
     let raw;
+
     try {
       raw = JSON.parse(text);
-      debugState.lastParsedOk = true;
-    } catch (err) {
-      debugState.lastError = `JSON parse failed: ${err.message}`;
+    } catch {
       scheduleNextFetch();
       return;
     }
@@ -271,38 +236,17 @@ async function fetchAlerts() {
       lastAlertSignature = signature;
 
       const normalized = normalizeAlert(raw);
-      lastAlertObject = normalized;
 
+      lastAlertObject = normalized;
       history.unshift(normalized);
       history = history.slice(0, 100);
 
       printAlert(normalized);
-
-      if (typeof broadcast === "function") {
-        broadcast("alert", normalized);
-      }
     }
-  } catch (err) {
-    debugState.lastError = err.message;
-  }
+  } catch {}
 
   scheduleNextFetch();
 }
-
-
-
-
-wss.on("connection", (ws) => {
-  ws.send(
-    JSON.stringify({
-      type: "init",
-      payload: {
-        lastAlert: lastAlertObject,
-        history,
-      },
-    })
-  );
-});
 
 app.get("/health", (req, res) => {
   res.json({ ok: true });
@@ -316,13 +260,6 @@ app.get("/api/history", (req, res) => {
   res.json(history);
 });
 
-app.get("/debug", (req, res) => {
-  res.json({
-    debugState,
-    lastAlertObject,
-    historyCount: history.length,
-  });
-});
 setInterval(printHeartbeat, 60000);
 
 server.listen(PORT, () => {

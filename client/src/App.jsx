@@ -1,18 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  MapContainer,
-  TileLayer,
-  Marker,
-  Popup,
-  CircleMarker,
-  useMap,
-} from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, CircleMarker, useMap } from "react-leaflet";
 import L from "leaflet";
 import "./App.css";
 import { cityCoords } from "./data/cities";
 
-const ALERT_SOURCE_URL =
-  "https://www.oref.org.il/WarningMessages/alert/alerts.json";
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+});
 
 const SOUND_MAP = {
   "באר שבע": "/sounds/sepultura.mp3",
@@ -21,130 +18,13 @@ const SOUND_MAP = {
   "תל אביב": "/sounds/telaviv.mp3",
 };
 
-const DEFAULT_BELL_SOUND = "/sounds/bell.aiff";
-const MAX_HISTORY = 100;
-
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl:
-    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  iconUrl:
-    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  shadowUrl:
-    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-});
-
-const categoryMap = {
-  1: "ירי רקטות וטילים",
-  2: "חשש לחדירת מחבלים",
-  3: "רעידת אדמה",
-  4: "אירוע חומרים מסוכנים",
-  5: "אירוע ביטחוני",
-  6: "חדירת כלי טיס עוין",
-  10: "הודעת מצב",
-};
-
-function normalizeText(text) {
-  return String(text || "")
-    .replace(/["'׳״]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function includesOneOf(text, phrases) {
-  const safeText = normalizeText(text);
-  return phrases.some((phrase) => safeText.includes(phrase));
-}
-
-function resolveAlertKind(raw) {
-  const cat = Number(raw?.cat ?? 0);
-  const title = normalizeText(raw?.title ?? "");
-  const desc = normalizeText(raw?.desc ?? "");
-
-  const isEnded =
-    includesOneOf(title, ["האירוע הסתיים"]) ||
-    includesOneOf(desc, ["האירוע הסתיים", "יכולים לצאת"]);
-
-  const isEarlyWarning =
-    includesOneOf(title, ["התראה מוקדמת", "התראה מקדימה"]) ||
-    includesOneOf(desc, ["התראה מוקדמת", "התראה מקדימה"]);
-
-  if (isEnded) {
-    return "ended";
-  }
-
-  if (cat === 10) {
-    return "early";
-  }
-
-  if (isEarlyWarning) {
-    return "early";
-  }
-
-  return "live";
-}
-
-function resolveCategoryName(raw) {
-  const cat = Number(raw?.cat ?? 0);
-  const kind = resolveAlertKind(raw);
-
-  if (kind === "early") {
-    return "התראה מוקדמת";
-  }
-
-  if (kind === "ended") {
-    return "האירוע הסתיים";
-  }
-
-  return categoryMap[cat] || "קטגוריה לא ידועה";
-}
-
-function sortAreasHebrew(areas) {
-  return [...areas].sort((a, b) => a.localeCompare(b, "he"));
-}
-
-function buildSignature(raw) {
-  const title = raw?.title ?? "";
-  const desc = raw?.desc ?? "";
-  const areas = Array.isArray(raw?.data)
-    ? sortAreasHebrew(raw.data).join("|")
-    : "";
-
-  return `${title}__${desc}__${areas}`;
-}
-
-function normalizeAlert(raw) {
-  const areas = Array.isArray(raw?.data) ? sortAreasHebrew(raw.data) : [];
-  const categoryCode = Number(raw?.cat ?? 0);
-  const alertKind = resolveAlertKind(raw);
-
-  return {
-    id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    title: raw?.title ?? "התרעה",
-    desc: raw?.desc ?? "",
-    areas,
-    category: categoryCode,
-    categoryName: resolveCategoryName(raw),
-    alertKind,
-    receivedAt: new Date().toISOString(),
-  };
-}
+const DEFAULT_BELL_SOUND = "/sounds/315618__modularsamples__yamaha-cs-30l-whoopie-bass-c5-whoopie-bass-72-127.aiff";
 
 function normalizeCityName(name) {
   return String(name || "")
     .replace(/\s+/g, " ")
     .replace(/["'׳״]/g, "")
     .trim();
-}
-
-function cityMatchesKey(city, key) {
-  const normalizedCity = normalizeCityName(city);
-  const normalizedKey = normalizeCityName(key);
-
-  return (
-    normalizedCity.includes(normalizedKey) ||
-    normalizedKey.includes(normalizedCity)
-  );
 }
 
 function findCoordsByCityName(cityName) {
@@ -158,15 +38,22 @@ function findCoordsByCityName(cityName) {
 
   const matchedKey = Object.keys(cityCoords).find((key) => {
     const normalizedKey = normalizeCityName(key);
-    return (
-      normalizedInput.includes(normalizedKey) ||
-      normalizedKey.includes(normalizedInput)
-    );
+    return normalizedInput.includes(normalizedKey) || normalizedKey.includes(normalizedInput);
   });
 
   if (!matchedKey) return null;
 
   return { ...cityCoords[matchedKey], label: cityName };
+}
+
+function cityMatchesKey(city, key) {
+  const normalizedCity = normalizeCityName(city);
+  const normalizedKey = normalizeCityName(key);
+
+  return (
+    normalizedCity.includes(normalizedKey) ||
+    normalizedKey.includes(normalizedCity)
+  );
 }
 
 function findMetalSoundForAlert(alert) {
@@ -181,7 +68,7 @@ function findMetalSoundForAlert(alert) {
   return null;
 }
 
-async function playAudio(src) {
+async function tryPlay(src) {
   const audio = new Audio(src);
   audio.preload = "auto";
   await audio.play();
@@ -195,15 +82,14 @@ async function playSoundsForAlert(alert, soundEnabled) {
   }
 
   try {
-    await playAudio(DEFAULT_BELL_SOUND);
+    await tryPlay(DEFAULT_BELL_SOUND);
   } catch {}
 
   if (alert.alertKind === "early") {
     const metalSound = findMetalSoundForAlert(alert);
-
     if (metalSound) {
       setTimeout(() => {
-        playAudio(metalSound).catch(() => {});
+        tryPlay(metalSound).catch(() => {});
       }, 150);
     }
   }
@@ -233,64 +119,29 @@ export default function App() {
   const [status, setStatus] = useState("טוען...");
   const [soundEnabled, setSoundEnabled] = useState(false);
 
-  const lastSignatureRef = useRef(null);
   const lastPlayedAlertIdRef = useRef(null);
 
-  async function fetchAlertsDirectly() {
+  async function loadData() {
     try {
-      const res = await fetch(ALERT_SOURCE_URL, {
-        headers: {
-          Accept: "application/json, text/plain, */*",
-        },
-      });
+      const [lastRes, historyRes] = await Promise.all([
+        fetch("/api/last-alert"),
+        fetch("/api/history"),
+      ]);
 
-      if (!res.ok) {
-        setStatus(`שגיאת מקור ${res.status}`);
-        return;
-      }
+      const lastData = await lastRes.json();
+      const historyData = await historyRes.json();
 
-      const text = await res.text();
-
-      if (!text || text.length < 5) {
-        setStatus("אין כרגע התראה");
-        return;
-      }
-
-      let raw;
-      try {
-        raw = JSON.parse(text);
-      } catch {
-        setStatus("המקור לא החזיר JSON");
-        return;
-      }
-
-      if (!raw || !Array.isArray(raw.data) || raw.data.length === 0) {
-        setStatus("אין כרגע התראה");
-        return;
-      }
-
-      const signature = buildSignature(raw);
-
-      if (signature === lastSignatureRef.current) {
-        setStatus("מחובר");
-        return;
-      }
-
-      lastSignatureRef.current = signature;
-
-      const normalized = normalizeAlert(raw);
-
-      setLastAlert(normalized);
-      setHistory((prev) => [normalized, ...prev].slice(0, MAX_HISTORY));
+      setLastAlert(lastData);
+      setHistory(Array.isArray(historyData) ? historyData : []);
       setStatus("מחובר");
-    } catch (error) {
-      setStatus("שגיאת חיבור או CORS");
+    } catch {
+      setStatus("שגיאת חיבור");
     }
   }
 
   useEffect(() => {
-    fetchAlertsDirectly();
-    const interval = setInterval(fetchAlertsDirectly, 2000);
+    loadData();
+    const interval = setInterval(loadData, 2000);
     return () => clearInterval(interval);
   }, []);
 
@@ -304,7 +155,6 @@ export default function App() {
 
   const alertPoints = useMemo(() => {
     if (!lastAlert?.areas?.length) return [];
-
     return lastAlert.areas
       .map((city) => findCoordsByCityName(city))
       .filter(Boolean);
@@ -312,12 +162,13 @@ export default function App() {
 
   async function enableSound() {
     try {
-      const audio = new Audio(DEFAULT_BELL_SOUND);
-      audio.muted = true;
-      await audio.play();
-      audio.pause();
-      audio.currentTime = 0;
-      audio.muted = false;
+      const warmup = new Audio(DEFAULT_BELL_SOUND);
+      warmup.preload = "auto";
+      warmup.muted = true;
+      await warmup.play();
+      warmup.pause();
+      warmup.currentTime = 0;
+      warmup.muted = false;
       setSoundEnabled(true);
     } catch {
       setSoundEnabled(true);
@@ -329,12 +180,11 @@ export default function App() {
       <header className="header">
         <div>
           <h1>מפת אזעקות בזמן אמת</h1>
-          <p className="sub">משיכה ישירה מהמקור בדפדפן</p>
+          <p className="sub">התראה אחרונה והיסטוריה מהמנוע שלך</p>
         </div>
 
         <div className="header-actions">
           <div className="status">{status}</div>
-
           <button className="sound-btn" onClick={enableSound}>
             {soundEnabled ? "סאונד פעיל" : "הפעלת סאונד"}
           </button>
@@ -346,24 +196,16 @@ export default function App() {
           <h2>מפת ישראל</h2>
 
           <div className="map-wrap">
-            <MapContainer
-              center={[31.5, 34.9]}
-              zoom={7}
-              scrollWheelZoom={true}
-              className="map"
-            >
+            <MapContainer center={[31.5, 34.9]} zoom={7} scrollWheelZoom={true} className="map">
               <TileLayer
-                attribution="© OpenStreetMap contributors"
+                attribution="&copy; OpenStreetMap contributors"
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
 
               <FitMapToMarkers points={alertPoints} />
 
               {alertPoints.map((point, index) => (
-                <Marker
-                  key={`${point.label}-${index}`}
-                  position={[point.lat, point.lng]}
-                >
+                <Marker key={`${point.label}-${index}`} position={[point.lat, point.lng]}>
                   <Popup>
                     <strong>{point.label}</strong>
                     <br />
@@ -396,26 +238,12 @@ export default function App() {
               <p>אין כרגע התראה להצגה</p>
             ) : (
               <div className="alert-box">
-                <p>
-                  <strong>כותרת:</strong> {lastAlert.title}
-                </p>
-
-                <p>
-                  <strong>תיאור:</strong> {lastAlert.desc || "ללא תיאור"}
-                </p>
-
-                <p>
-                  <strong>קטגוריה:</strong> {lastAlert.category}
-                </p>
-
-                <p>
-                  <strong>סוג קטגוריה:</strong> {lastAlert.categoryName}
-                </p>
-
-                <p>
-                  <strong>זמן:</strong>{" "}
-                  {new Date(lastAlert.receivedAt).toLocaleString("he-IL")}
-                </p>
+                <p><strong>כותרת:</strong> {lastAlert.title}</p>
+                <p><strong>תיאור:</strong> {lastAlert.desc || "ללא תיאור"}</p>
+                <p><strong>קטגוריה:</strong> {lastAlert.category}</p>
+                <p><strong>סוג קטגוריה:</strong> {lastAlert.categoryName}</p>
+                <p><strong>סוג פנימי:</strong> {lastAlert.alertKind}</p>
+                <p><strong>זמן:</strong> {new Date(lastAlert.receivedAt).toLocaleString("he-IL")}</p>
 
                 <div>
                   <strong>יישובים:</strong>
@@ -438,9 +266,7 @@ export default function App() {
               <div className="history-list">
                 {history.map((item) => (
                   <div className="history-item" key={item.id}>
-                    <div>
-                      <strong>{item.title}</strong>
-                    </div>
+                    <div><strong>{item.title}</strong></div>
                     <div>{item.categoryName}</div>
                     <div>{item.areas?.join(", ")}</div>
                   </div>
