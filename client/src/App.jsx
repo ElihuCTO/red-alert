@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MapContainer, TileLayer, Marker, Popup, CircleMarker, useMap } from "react-leaflet";
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  CircleMarker,
+  useMap,
+} from "react-leaflet";
 import L from "leaflet";
 import "./App.css";
 import { cityCoords } from "./data/cities";
 
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
-  
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-});
+  import.meta.env.VITE_API_BASE_URL ||
+  "https://red-alert-wso0.onrender.com";
 
 const SOUND_MAP = {
   "באר שבע": "/sounds/sepultura.mp3",
@@ -23,11 +24,31 @@ const SOUND_MAP = {
 
 const DEFAULT_BELL_SOUND = "/sounds/bell.aiff";
 
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl:
+    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  iconUrl:
+    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  shadowUrl:
+    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+});
+
 function normalizeCityName(name) {
   return String(name || "")
     .replace(/\s+/g, " ")
     .replace(/["'׳״]/g, "")
     .trim();
+}
+
+function cityMatchesKey(city, key) {
+  const normalizedCity = normalizeCityName(city);
+  const normalizedKey = normalizeCityName(key);
+
+  return (
+    normalizedCity.includes(normalizedKey) ||
+    normalizedKey.includes(normalizedCity)
+  );
 }
 
 function findCoordsByCityName(cityName) {
@@ -41,22 +62,15 @@ function findCoordsByCityName(cityName) {
 
   const matchedKey = Object.keys(cityCoords).find((key) => {
     const normalizedKey = normalizeCityName(key);
-    return normalizedInput.includes(normalizedKey) || normalizedKey.includes(normalizedInput);
+    return (
+      normalizedInput.includes(normalizedKey) ||
+      normalizedKey.includes(normalizedInput)
+    );
   });
 
   if (!matchedKey) return null;
 
   return { ...cityCoords[matchedKey], label: cityName };
-}
-
-function cityMatchesKey(city, key) {
-  const normalizedCity = normalizeCityName(city);
-  const normalizedKey = normalizeCityName(key);
-
-  return (
-    normalizedCity.includes(normalizedKey) ||
-    normalizedKey.includes(normalizedCity)
-  );
 }
 
 function findMetalSoundForAlert(alert) {
@@ -71,28 +85,30 @@ function findMetalSoundForAlert(alert) {
   return null;
 }
 
-async function tryPlay(src) {
+async function playAudio(src) {
   const audio = new Audio(src);
   audio.preload = "auto";
   await audio.play();
 }
 
 async function playSoundsForAlert(alert, soundEnabled) {
-  if (!soundEnabled || !alert) return;
+  if (!soundEnabled) return;
+  if (!alert) return;
 
   if (alert.alertKind === "ended") {
     return;
   }
 
   try {
-    await tryPlay(DEFAULT_BELL_SOUND);
+    await playAudio(DEFAULT_BELL_SOUND);
   } catch {}
 
   if (alert.alertKind === "early") {
     const metalSound = findMetalSoundForAlert(alert);
+
     if (metalSound) {
       setTimeout(() => {
-        tryPlay(metalSound).catch(() => {});
+        playAudio(metalSound).catch(() => {});
       }, 150);
     }
   }
@@ -122,9 +138,7 @@ export default function App() {
   const [status, setStatus] = useState("טוען...");
   const [soundEnabled, setSoundEnabled] = useState(false);
 
-  const lastPlayedAlertIdRef = useRef(null);
-
-
+  const lastPlayedAlertId = useRef(null);
 
   async function loadData() {
     try {
@@ -132,19 +146,17 @@ export default function App() {
         fetch(`${API_BASE_URL}/api/last-alert`),
         fetch(`${API_BASE_URL}/api/history`),
       ]);
-  
+
       const lastData = await lastRes.json();
       const historyData = await historyRes.json();
-  
+
       setLastAlert(lastData);
       setHistory(Array.isArray(historyData) ? historyData : []);
       setStatus("מחובר");
-    } catch (error) {
+    } catch {
       setStatus("שגיאת חיבור");
     }
   }
-
-
 
   useEffect(() => {
     loadData();
@@ -154,14 +166,15 @@ export default function App() {
 
   useEffect(() => {
     if (!lastAlert?.id) return;
-    if (lastPlayedAlertIdRef.current === lastAlert.id) return;
+    if (lastPlayedAlertId.current === lastAlert.id) return;
 
-    lastPlayedAlertIdRef.current = lastAlert.id;
+    lastPlayedAlertId.current = lastAlert.id;
     playSoundsForAlert(lastAlert, soundEnabled);
   }, [lastAlert, soundEnabled]);
 
   const alertPoints = useMemo(() => {
     if (!lastAlert?.areas?.length) return [];
+
     return lastAlert.areas
       .map((city) => findCoordsByCityName(city))
       .filter(Boolean);
@@ -169,13 +182,13 @@ export default function App() {
 
   async function enableSound() {
     try {
-      const warmup = new Audio(DEFAULT_BELL_SOUND);
-      warmup.preload = "auto";
-      warmup.muted = true;
-      await warmup.play();
-      warmup.pause();
-      warmup.currentTime = 0;
-      warmup.muted = false;
+      const audio = new Audio(DEFAULT_BELL_SOUND);
+      audio.muted = true;
+      await audio.play();
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+
       setSoundEnabled(true);
     } catch {
       setSoundEnabled(true);
@@ -192,6 +205,7 @@ export default function App() {
 
         <div className="header-actions">
           <div className="status">{status}</div>
+
           <button className="sound-btn" onClick={enableSound}>
             {soundEnabled ? "סאונד פעיל" : "הפעלת סאונד"}
           </button>
@@ -203,16 +217,24 @@ export default function App() {
           <h2>מפת ישראל</h2>
 
           <div className="map-wrap">
-            <MapContainer center={[31.5, 34.9]} zoom={7} scrollWheelZoom={true} className="map">
+            <MapContainer
+              center={[31.5, 34.9]}
+              zoom={7}
+              scrollWheelZoom={true}
+              className="map"
+            >
               <TileLayer
-                attribution="&copy; OpenStreetMap contributors"
+                attribution="© OpenStreetMap contributors"
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
 
               <FitMapToMarkers points={alertPoints} />
 
               {alertPoints.map((point, index) => (
-                <Marker key={`${point.label}-${index}`} position={[point.lat, point.lng]}>
+                <Marker
+                  key={`${point.label}-${index}`}
+                  position={[point.lat, point.lng]}
+                >
                   <Popup>
                     <strong>{point.label}</strong>
                     <br />
@@ -245,15 +267,34 @@ export default function App() {
               <p>אין כרגע התראה להצגה</p>
             ) : (
               <div className="alert-box">
-                <p><strong>כותרת:</strong> {lastAlert.title}</p>
-                <p><strong>תיאור:</strong> {lastAlert.desc || "ללא תיאור"}</p>
-                <p><strong>קטגוריה:</strong> {lastAlert.category}</p>
-                <p><strong>סוג קטגוריה:</strong> {lastAlert.categoryName}</p>
-                <p><strong>סוג פנימי:</strong> {lastAlert.alertKind}</p>
-                <p><strong>זמן:</strong> {new Date(lastAlert.receivedAt).toLocaleString("he-IL")}</p>
+                <p>
+                  <strong>כותרת:</strong> {lastAlert.title}
+                </p>
+
+                <p>
+                  <strong>תיאור:</strong>{" "}
+                  {lastAlert.desc || "ללא תיאור"}
+                </p>
+
+                <p>
+                  <strong>קטגוריה:</strong> {lastAlert.category}
+                </p>
+
+                <p>
+                  <strong>סוג קטגוריה:</strong>{" "}
+                  {lastAlert.categoryName}
+                </p>
+
+                <p>
+                  <strong>זמן:</strong>{" "}
+                  {new Date(
+                    lastAlert.receivedAt
+                  ).toLocaleString("he-IL")}
+                </p>
 
                 <div>
                   <strong>יישובים:</strong>
+
                   <ul>
                     {lastAlert.areas?.map((city, index) => (
                       <li key={`${city}-${index}`}>{city}</li>
@@ -273,8 +314,12 @@ export default function App() {
               <div className="history-list">
                 {history.map((item) => (
                   <div className="history-item" key={item.id}>
-                    <div><strong>{item.title}</strong></div>
+                    <div>
+                      <strong>{item.title}</strong>
+                    </div>
+
                     <div>{item.categoryName}</div>
+
                     <div>{item.areas?.join(", ")}</div>
                   </div>
                 ))}
