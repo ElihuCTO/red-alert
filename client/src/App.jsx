@@ -26,7 +26,7 @@ const SOUND_MAP = {
   "תל אביב": "/sounds/telaviv.mp3",
 };
 
-const DEFAULT_BELL_SOUND = "/sounds/bell.aiff";
+const DEFAULT_BELL_SOUND = "/sounds/315618__modularsamples__yamaha-cs-30l-whoopie-bass-c5-whoopie-bass-72-127.aiff";
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
