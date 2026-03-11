@@ -286,6 +286,12 @@ app.get("/api/history", (req, res) => {
   res.json(history);
 });
 
+app.get("/debug", (req, res) => {
+  res.json({
+    lastAlertObject,
+    historyCount: history.length
+  });
+});
 setInterval(printHeartbeat, 60000);
 
 server.listen(PORT, () => {
