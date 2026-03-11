@@ -34,11 +34,31 @@ body {
   color: #94a3b8;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .status {
   background: #1e293b;
   padding: 10px 14px;
   border-radius: 12px;
   border: 1px solid #334155;
+}
+
+.sound-btn {
+  background: #2563eb;
+  color: white;
+  border: 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.sound-btn:hover {
+  background: #1d4ed8;
 }
 
 .layout {
@@ -124,5 +144,14 @@ li {
 
   .map-wrap {
     height: 420px;
+  }
+
+  .header {
+    flex-direction: column;
+  }
+
+  .header-actions {
+    width: 100%;
+    justify-content: space-between;
   }
 }

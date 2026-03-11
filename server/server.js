@@ -1,9 +1,6 @@
 import express from "express";
 import http from "http";
 import cors from "cors";
-import { exec } from "child_process";
-import path from "path";
-import { fileURLToPath } from "url";
 
 const app = express();
 app.use(cors());
@@ -13,19 +10,6 @@ const server = http.createServer(app);
 const PORT = 3000;
 
 const ALERT_SOURCE_URL = "https://www.oref.org.il/WarningMessages/alert/alerts.json";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const SOUND_MAP = {
-  "באר שבע": "sepultura.mp3",
-  "חיפה": "haifa.mp3",
-  "ירושלים": "jerusalem.mp3",
-  "תל אביב": "telaviv.mp3",
-};
-
-const DEFAULT_BELL_SOUND =
-  "315618__modularsamples__yamaha-cs-30l-whoopie-bass-c5-whoopie-bass-72-127.aiff";
 
 let lastAlertSignature = null;
 let lastAlertObject = null;
@@ -92,29 +76,32 @@ function includesOneOf(text, phrases) {
   return phrases.some((phrase) => safeText.includes(phrase));
 }
 
+function normalizeText(text) {
+  return String(text || "")
+    .replace(/["'׳״]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function resolveAlertKind(raw) {
   const cat = Number(raw?.cat ?? 0);
-  const title = String(raw?.title ?? "").trim();
-  const desc = String(raw?.desc ?? "").trim();
+  const title = normalizeText(raw?.title ?? "");
+  const desc = normalizeText(raw?.desc ?? "");
 
   const isEnded =
     includesOneOf(title, ["האירוע הסתיים"]) ||
     includesOneOf(desc, ["האירוע הסתיים", "יכולים לצאת"]);
 
   const isEarlyWarning =
-    includesOneOf(title, ["התראה מוקדמת"]) ||
-    includesOneOf(desc, ["התראה מוקדמת"]);
-
-  if (cat === 10 && isEnded) {
-    return "ended";
-  }
-
-  if (cat === 10 && isEarlyWarning) {
-    return "early";
-  }
+    includesOneOf(title, ["התראה מוקדמת", "התראה מקדימה"]) ||
+    includesOneOf(desc, ["התראה מוקדמת", "התראה מקדימה"]);
 
   if (isEnded) {
     return "ended";
+  }
+
+  if (cat === 10) {
+    return "early";
   }
 
   if (isEarlyWarning) {
@@ -173,58 +160,6 @@ function getCategoryColor(alert) {
       return colors.cyan;
     default:
       return colors.white;
-  }
-}
-
-function playSoundFile(filename) {
-  const soundPath = path.join(__dirname, filename);
-  exec(`afplay "${soundPath}"`, () => {});
-}
-
-function normalizeCityText(text) {
-  return String(text || "")
-    .replace(/["'׳״]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function cityMatchesKey(city, key) {
-  const normalizedCity = normalizeCityText(city);
-  const normalizedKey = normalizeCityText(key);
-
-  return (
-    normalizedCity.includes(normalizedKey) ||
-    normalizedKey.includes(normalizedCity)
-  );
-}
-
-function findMetalSoundForAlert(alert) {
-  for (const city of alert.areas) {
-    for (const key of Object.keys(SOUND_MAP)) {
-      if (cityMatchesKey(city, key)) {
-        return SOUND_MAP[key];
-      }
-    }
-  }
-
-  return null;
-}
-
-function playSoundsForAlert(alert) {
-  if (alert.alertKind === "ended") {
-    return;
-  }
-
-  playSoundFile(DEFAULT_BELL_SOUND);
-
-  if (alert.alertKind === "early") {
-    const metalSound = findMetalSoundForAlert(alert);
-
-    if (metalSound) {
-      setTimeout(() => {
-        playSoundFile(metalSound);
-      }, 150);
-    }
   }
 }
 
@@ -303,12 +238,10 @@ async function fetchAlerts() {
       const normalized = normalizeAlert(raw);
 
       lastAlertObject = normalized;
-
       history.unshift(normalized);
       history = history.slice(0, 100);
 
       printAlert(normalized);
-      playSoundsForAlert(normalized);
     }
   } catch {}
 
