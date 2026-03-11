@@ -11,13 +11,8 @@ import L from "leaflet";
 import "./App.css";
 import { cityCoords } from "./data/cities";
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ||
-  "https://red-alert-wso0.onrender.com";
-
-const WS_BASE_URL =
-  import.meta.env.VITE_WS_BASE_URL ||
-  "wss://red-alert-wso0.onrender.com";
+const ALERT_SOURCE_URL =
+  "https://www.oref.org.il/WarningMessages/alert/alerts.json";
 
 const SOUND_MAP = {
   "באר שבע": "/sounds/sepultura.mp3",
@@ -26,7 +21,8 @@ const SOUND_MAP = {
   "תל אביב": "/sounds/telaviv.mp3",
 };
 
-const DEFAULT_BELL_SOUND = "/sounds/315618__modularsamples__yamaha-cs-30l-whoopie-bass-c5-whoopie-bass-72-127.aiff";
+const DEFAULT_BELL_SOUND = "/sounds/bell.aiff";
+const MAX_HISTORY = 100;
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -37,6 +33,102 @@ L.Icon.Default.mergeOptions({
   shadowUrl:
     "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
 });
+
+const categoryMap = {
+  1: "ירי רקטות וטילים",
+  2: "חשש לחדירת מחבלים",
+  3: "רעידת אדמה",
+  4: "אירוע חומרים מסוכנים",
+  5: "אירוע ביטחוני",
+  6: "חדירת כלי טיס עוין",
+  10: "הודעת מצב",
+};
+
+function normalizeText(text) {
+  return String(text || "")
+    .replace(/["'׳״]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function includesOneOf(text, phrases) {
+  const safeText = normalizeText(text);
+  return phrases.some((phrase) => safeText.includes(phrase));
+}
+
+function resolveAlertKind(raw) {
+  const cat = Number(raw?.cat ?? 0);
+  const title = normalizeText(raw?.title ?? "");
+  const desc = normalizeText(raw?.desc ?? "");
+
+  const isEnded =
+    includesOneOf(title, ["האירוע הסתיים"]) ||
+    includesOneOf(desc, ["האירוע הסתיים", "יכולים לצאת"]);
+
+  const isEarlyWarning =
+    includesOneOf(title, ["התראה מוקדמת", "התראה מקדימה"]) ||
+    includesOneOf(desc, ["התראה מוקדמת", "התראה מקדימה"]);
+
+  if (isEnded) {
+    return "ended";
+  }
+
+  if (cat === 10) {
+    return "early";
+  }
+
+  if (isEarlyWarning) {
+    return "early";
+  }
+
+  return "live";
+}
+
+function resolveCategoryName(raw) {
+  const cat = Number(raw?.cat ?? 0);
+  const kind = resolveAlertKind(raw);
+
+  if (kind === "early") {
+    return "התראה מוקדמת";
+  }
+
+  if (kind === "ended") {
+    return "האירוע הסתיים";
+  }
+
+  return categoryMap[cat] || "קטגוריה לא ידועה";
+}
+
+function sortAreasHebrew(areas) {
+  return [...areas].sort((a, b) => a.localeCompare(b, "he"));
+}
+
+function buildSignature(raw) {
+  const title = raw?.title ?? "";
+  const desc = raw?.desc ?? "";
+  const areas = Array.isArray(raw?.data)
+    ? sortAreasHebrew(raw.data).join("|")
+    : "";
+
+  return `${title}__${desc}__${areas}`;
+}
+
+function normalizeAlert(raw) {
+  const areas = Array.isArray(raw?.data) ? sortAreasHebrew(raw.data) : [];
+  const categoryCode = Number(raw?.cat ?? 0);
+  const alertKind = resolveAlertKind(raw);
+
+  return {
+    id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    title: raw?.title ?? "התרעה",
+    desc: raw?.desc ?? "",
+    areas,
+    category: categoryCode,
+    categoryName: resolveCategoryName(raw),
+    alertKind,
+    receivedAt: new Date().toISOString(),
+  };
+}
 
 function normalizeCityName(name) {
   return String(name || "")
@@ -138,11 +230,77 @@ function FitMapToMarkers({ points }) {
 export default function App() {
   const [lastAlert, setLastAlert] = useState(null);
   const [history, setHistory] = useState([]);
-  const [status, setStatus] = useState("מתחבר...");
+  const [status, setStatus] = useState("טוען...");
   const [soundEnabled, setSoundEnabled] = useState(false);
 
-  const lastPlayedAlertId = useRef(null);
-  const reconnectTimeoutRef = useRef(null);
+  const lastSignatureRef = useRef(null);
+  const lastPlayedAlertIdRef = useRef(null);
+
+  async function fetchAlertsDirectly() {
+    try {
+      const res = await fetch(ALERT_SOURCE_URL, {
+        headers: {
+          Accept: "application/json, text/plain, */*",
+        },
+      });
+
+      if (!res.ok) {
+        setStatus(`שגיאת מקור ${res.status}`);
+        return;
+      }
+
+      const text = await res.text();
+
+      if (!text || text.length < 5) {
+        setStatus("אין כרגע התראה");
+        return;
+      }
+
+      let raw;
+      try {
+        raw = JSON.parse(text);
+      } catch {
+        setStatus("המקור לא החזיר JSON");
+        return;
+      }
+
+      if (!raw || !Array.isArray(raw.data) || raw.data.length === 0) {
+        setStatus("אין כרגע התראה");
+        return;
+      }
+
+      const signature = buildSignature(raw);
+
+      if (signature === lastSignatureRef.current) {
+        setStatus("מחובר");
+        return;
+      }
+
+      lastSignatureRef.current = signature;
+
+      const normalized = normalizeAlert(raw);
+
+      setLastAlert(normalized);
+      setHistory((prev) => [normalized, ...prev].slice(0, MAX_HISTORY));
+      setStatus("מחובר");
+    } catch (error) {
+      setStatus("שגיאת חיבור או CORS");
+    }
+  }
+
+  useEffect(() => {
+    fetchAlertsDirectly();
+    const interval = setInterval(fetchAlertsDirectly, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (!lastAlert?.id) return;
+    if (lastPlayedAlertIdRef.current === lastAlert.id) return;
+
+    lastPlayedAlertIdRef.current = lastAlert.id;
+    playSoundsForAlert(lastAlert, soundEnabled);
+  }, [lastAlert, soundEnabled]);
 
   const alertPoints = useMemo(() => {
     if (!lastAlert?.areas?.length) return [];
@@ -151,74 +309,6 @@ export default function App() {
       .map((city) => findCoordsByCityName(city))
       .filter(Boolean);
   }, [lastAlert]);
-
-  useEffect(() => {
-    let ws;
-
-    function connect() {
-      ws = new WebSocket(WS_BASE_URL);
-
-      ws.onopen = () => {
-        setStatus("מחובר בלייב");
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-
-          if (msg.type === "init") {
-            if (msg.payload?.lastAlert) {
-              setLastAlert(msg.payload.lastAlert);
-            }
-
-            if (Array.isArray(msg.payload?.history)) {
-              setHistory(msg.payload.history);
-            }
-
-            return;
-          }
-
-          if (msg.type === "alert" && msg.payload) {
-            setLastAlert(msg.payload);
-            setHistory((prev) => {
-              const next = [msg.payload, ...prev.filter((x) => x.id !== msg.payload.id)];
-              return next.slice(0, 100);
-            });
-          }
-        } catch {}
-      };
-
-      ws.onclose = () => {
-        setStatus("החיבור נותק, מנסה להתחבר מחדש...");
-        reconnectTimeoutRef.current = setTimeout(connect, 3000);
-      };
-
-      ws.onerror = () => {
-        setStatus("שגיאת WebSocket");
-        ws.close();
-      };
-    }
-
-    connect();
-
-    return () => {
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-
-      if (ws) {
-        ws.close();
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!lastAlert?.id) return;
-    if (lastPlayedAlertId.current === lastAlert.id) return;
-
-    lastPlayedAlertId.current = lastAlert.id;
-    playSoundsForAlert(lastAlert, soundEnabled);
-  }, [lastAlert, soundEnabled]);
 
   async function enableSound() {
     try {
@@ -239,7 +329,7 @@ export default function App() {
       <header className="header">
         <div>
           <h1>מפת אזעקות בזמן אמת</h1>
-          <p className="sub">התראות בלייב דרך WebSocket</p>
+          <p className="sub">משיכה ישירה מהמקור בדפדפן</p>
         </div>
 
         <div className="header-actions">
@@ -329,7 +419,6 @@ export default function App() {
 
                 <div>
                   <strong>יישובים:</strong>
-
                   <ul>
                     {lastAlert.areas?.map((city, index) => (
                       <li key={`${city}-${index}`}>{city}</li>
@@ -352,9 +441,7 @@ export default function App() {
                     <div>
                       <strong>{item.title}</strong>
                     </div>
-
                     <div>{item.categoryName}</div>
-
                     <div>{item.areas?.join(", ")}</div>
                   </div>
                 ))}
